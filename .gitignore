@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+pokemon_oceania_tracker.db
+.streamlit/secrets.toml
+.env

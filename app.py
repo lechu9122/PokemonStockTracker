@@ -87,6 +87,12 @@ def _sealed_products(set_name: str, prefix: str, extras: list[tuple[str, str]] |
 
 
 SET_CATALOG: dict[str, list[dict]] = {
+    # --- Anniversary (2026) ------------------------------------------------
+    "Pokémon 30th Anniversary": _sealed_products(
+        "Pokémon 30th Anniversary", "30th Anniversary",
+        [("Ultra Premium Collection", "upc"), ("Special Collection", "special")],
+    ),
+
     # --- Mega Evolution era (2025–2026) — newest first ---------------------
     "Mega Evolution — Chaos Rising": _sealed_products(
         "Mega Evolution — Chaos Rising", "Mega Evolution Chaos Rising"),
@@ -682,9 +688,11 @@ def render_charts(df: pd.DataFrame, p: Portfolio, active: str, rates, multiplier
 
 
 def set_search_query(set_label: str) -> str:
-    """Build the eBay search query for a set label (drops the era em-dash)."""
+    """Build the eBay search query for a set label (drops the era em-dash, and
+    avoids a doubled 'Pokemon' when the label already names it)."""
     clean = set_label.replace(" — ", " ").strip()
-    return f"Pokemon {clean} sealed"
+    prefix = "" if "pokemon" in clean.lower() or "pokémon" in clean.lower() else "Pokemon "
+    return f"{prefix}{clean} sealed"
 
 
 @st.cache_data(ttl=900, show_spinner=False)

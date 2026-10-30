@@ -34,6 +34,7 @@ import datetime as _dt
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
@@ -47,6 +48,9 @@ import price_extractor as extractor
 # ---------------------------------------------------------------------------
 
 DB_PATH = "pokemon_oceania_tracker.db"
+
+# App logo (browser tab icon); falls back to an emoji if the file is missing.
+APP_ICON_PATH = Path(__file__).parent / "assets" / "icon.png"
 
 FRANKFURTER_URL = "https://api.frankfurter.app/latest"
 
@@ -893,7 +897,7 @@ def maybe_auto_refresh() -> None:
 def main() -> None:
     st.set_page_config(
         page_title="Pokémon TCG Tracker — Oceania",
-        page_icon="🎴",
+        page_icon=str(APP_ICON_PATH) if APP_ICON_PATH.exists() else "🎴",
         layout="wide",
     )
     init_db()

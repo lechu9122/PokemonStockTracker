@@ -81,6 +81,18 @@ PORT=8600 ./run.sh       # macOS / Linux   (Windows: set PORT=8600 && run.bat)
 
 Press **Ctrl+C** to stop the app.
 
+### One-click taskbar icon (Windows)
+
+1. Double-click **`Create Shortcut.bat`**. It puts a **Pokemon TCG Tracker**
+   shortcut with the app logo on your Desktop and in the Start Menu.
+2. Right-click the new desktop icon → **Pin to taskbar** (on Windows 11, click
+   **Show more options** first).
+
+Clicking the pinned icon starts the app in a minimized window and opens it in
+your browser. If it's already running, it just opens the browser tab. The logo
+lives in `assets/` (`logo.svg` source, `icon.png` for the browser tab,
+`icon.ico` for Windows).
+
 ### Manual setup (if you prefer)
 
 ```bash

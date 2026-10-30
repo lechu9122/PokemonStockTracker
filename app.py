@@ -31,6 +31,7 @@ Run with:
 from __future__ import annotations
 
 import datetime as _dt
+import re
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
@@ -66,7 +67,8 @@ DEFAULT_SEALED_MULTIPLIER = 1.05
 # flow). There is no free public API for *sealed* product per set, so this is a
 # curated catalog of recent, commonly-traded Oceania sealed products. Each entry
 # is {id, name, search_query}; the dict key is the set name. To track something
-# not listed here, use the "➕ Other / custom…" option in the logger.
+# not listed in a set, pick "✏️ Not listed…" in that set's product picker; for a
+# set that isn't catalogued at all, use the "➕ Other / custom…" set option.
 # ---------------------------------------------------------------------------
 
 def _sealed_products(set_name: str, prefix: str, extras: list[tuple[str, str]] | None = None) -> list[dict]:
@@ -84,7 +86,9 @@ def _sealed_products(set_name: str, prefix: str, extras: list[tuple[str, str]] |
         {
             "id": f"{slug}-{suffix}",
             "name": f"{prefix} {name}",
-            "search_query": f"Pokemon {prefix} {name} sealed",
+            # Drop "(…)" notes like "(Sam's Club)" — eBay treats parentheses as
+            # OR-grouping, which would muddy the search.
+            "search_query": re.sub(r"\s*\([^)]*\)", "", f"Pokemon {prefix} {name}") + " sealed",
         }
         for name, suffix in items
     ]
@@ -103,7 +107,9 @@ SET_CATALOG: dict[str, list[dict]] = {
     "Mega Evolution — Perfect Order": _sealed_products(
         "Mega Evolution — Perfect Order", "Mega Evolution Perfect Order"),
     "Mega Evolution — Ascended Heroes": _sealed_products(
-        "Mega Evolution — Ascended Heroes", "Mega Evolution Ascended Heroes"),
+        "Mega Evolution — Ascended Heroes", "Mega Evolution Ascended Heroes",
+        [("Focus Fighters (Sam's Club)", "focus-fighters")],
+    ),
     "Mega Evolution — Phantasmal Flames": _sealed_products(
         "Mega Evolution — Phantasmal Flames", "Mega Evolution Phantasmal Flames"),
     "Mega Evolution (Base Set)": _sealed_products(
@@ -167,6 +173,25 @@ SET_CATALOG: dict[str, list[dict]] = {
 # Sentinel set option that reveals free-text inputs for anything not catalogued.
 CUSTOM_SET_OPTION = "➕ Other / custom…"
 
+# Sentinel product option (inside a catalogued set) for a product that isn't in
+# the list — it's typed in by hand but still saved under the chosen set.
+UNLISTED_PRODUCT_OPTION = "✏️ Not listed — enter it manually…"
+
+
+def canonical_set_name(set_name: str) -> str:
+    """Map a hand-typed set name onto its catalog key when it names a catalogued
+    set (e.g. "ascended heroes" → "Mega Evolution — Ascended Heroes"), so lots
+    logged via a custom entry group with the rest of that set. Unknown names are
+    returned unchanged (just trimmed)."""
+    clean = (set_name or "").strip()
+    low = clean.lower()
+    if not low:
+        return clean
+    for key in SET_CATALOG:
+        if low in (key.lower(), key.split(" — ")[-1].lower()):
+            return key
+    return clean
+
 # Offline fallback FX rates (1 USD -> X). Only used if Frankfurter is unreachable.
 FALLBACK_FX = {"AUD": 1.52, "NZD": 1.66}
 
@@ -219,6 +244,13 @@ def init_db() -> None:
             );
             """
         )
+        # Re-home products saved under a hand-typed alias of a catalogued set
+        # (e.g. "Ascended Heroes") onto the catalog's set name.
+        for row in conn.execute("SELECT id, set_name FROM products").fetchall():
+            canonical = canonical_set_name(row["set_name"])
+            if canonical != (row["set_name"] or ""):
+                conn.execute("UPDATE products SET set_name = ? WHERE id = ?",
+                             (canonical, row["id"]))
 
 
 # --- Product helpers -------------------------------------------------------
@@ -236,6 +268,7 @@ def upsert_product(
     the product name. Returns the product's primary-key id.
     """
     search_query = search_query or name
+    set_name = canonical_set_name(set_name)
     with closing(get_connection()) as conn, conn:
         cur = conn.execute(
             "SELECT id FROM products WHERE tcg_or_collectr_id = ?", (tcg_id,)
@@ -706,6 +739,20 @@ def live_set_listings(set_label: str) -> list[dict]:
     return extractor.search_sealed_products(set_search_query(set_label), limit=50)
 
 
+def manual_product(name: str, search_query: str, set_name: str) -> dict:
+    """Build a product record for a hand-typed product. The id is scoped to the
+    set so the same name in two sets never collides on one product row."""
+    name = name.strip()
+    set_name = canonical_set_name(set_name)
+    slug = re.sub(r"[^a-z0-9]+", "-", f"{set_name} {name}".lower()).strip("-")
+    default_sq = f"Pokemon {set_name.replace(' — ', ' ')} {name} sealed".replace("  ", " ")
+    return {
+        "id": f"custom-{slug}",
+        "name": name,
+        "search_query": (search_query or "").strip() or default_sq,
+    }
+
+
 @st.dialog("➕ Log Inventory", width="large")
 def inventory_logger_dialog() -> None:
     """Focused modal: pick a set → pick a product from that set (searchable) →
@@ -735,26 +782,24 @@ def inventory_logger_dialog() -> None:
             key="log_custom_sq",
             help="What the eBay provider searches for. Defaults to the product name.",
         )
-        if name:
-            chosen_product = {
-                "id": (name.lower().replace(" ", "-")),
-                "name": name,
-                "search_query": search_query or name,
-            }
+        if name.strip():
+            chosen_product = manual_product(name, search_query, set_name)
     else:
         # --- Step 2: pick a product within the set (searchable) -------------
         st.markdown("**2 · Choose a product**")
         with st.spinner("Searching eBay for sealed listings…"):
             listings = live_set_listings(set_choice)
 
+        # The curated list is always offered (so catalogued products like
+        # retailer exclusives never vanish behind live results), followed by any
+        # live eBay listings, cheapest first.
+        source = SET_CATALOG[set_choice] + listings
         if listings:
-            source = listings  # live eBay results, cheapest first
             st.caption(
-                f"🔴 Live eBay — {len(listings)} sealed listings found. "
-                "Prices shown are the current lowest per title."
+                f"🔴 Live eBay — {len(listings)} sealed listings found, shown after "
+                "the curated list. Prices shown are the current lowest per title."
             )
         else:
-            source = SET_CATALOG[set_choice]  # graceful fallback
             st.caption(
                 "⚪️ Live eBay search unavailable (no results / keys) — "
                 "showing the curated product list."
@@ -770,17 +815,30 @@ def inventory_logger_dialog() -> None:
             q = search.lower()
             products = [p for p in products if q in p["name"].lower()]
         if not products:
-            st.warning("No products match that filter. Clear it or pick another set.")
-        else:
-            def _label(p: dict) -> str:
-                if p.get("usd_price") is not None:
-                    return f"{p['name']}  ·  ~US${p['usd_price']:.2f}"
-                return p["name"]
+            st.warning("No products match that filter — pick "
+                       f"“{UNLISTED_PRODUCT_OPTION}” to add it to this set.")
 
-            labels = [_label(p) for p in products]
-            # Key by set so switching sets starts a fresh selection (never a
-            # stale, out-of-options value carried over from the previous set).
-            picked = st.selectbox("Product", labels, key=f"log_product_{set_choice}")
+        def _label(p: dict) -> str:
+            if p.get("usd_price") is not None:
+                return f"{p['name']}  ·  ~US${p['usd_price']:.2f}"
+            return p["name"]
+
+        labels = [_label(p) for p in products] + [UNLISTED_PRODUCT_OPTION]
+        # Key by set (and filter) so switching either starts a fresh selection,
+        # never a stale, out-of-options value carried over.
+        picked = st.selectbox("Product", labels, key=f"log_product_{set_choice}_{search}")
+        if picked == UNLISTED_PRODUCT_OPTION:
+            c1, c2 = st.columns(2)
+            name = c1.text_input("Product name *", value=search, key=f"log_unlisted_name_{set_choice}")
+            search_query = c2.text_input(
+                "eBay search query (optional)",
+                key=f"log_unlisted_sq_{set_choice}",
+                help="What the eBay provider searches for. Defaults to the set + product name.",
+            )
+            st.caption(f"Will be saved under **{set_choice}**.")
+            if name.strip():
+                chosen_product = manual_product(name, search_query, set_choice)
+        else:
             chosen_product = products[labels.index(picked)]
             if chosen_product.get("url"):
                 st.caption(f"🔗 [View this listing on eBay]({chosen_product['url']})")

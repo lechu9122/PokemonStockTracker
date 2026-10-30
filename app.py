@@ -802,7 +802,32 @@ def inventory_logger_dialog() -> None:
     auto_price = c5.checkbox("Auto-fetch USD market price", value=True, key="log_auto")
 
     # --- Save ---------------------------------------------------------------
-    if st.button("💾 Add to inventory", type="primary", width="stretch"):
+    # Pin the save button to the bottom-right of the dialog so it stays visible
+    # however far the product list pushes the form down.
+    st.markdown(
+        """
+        <style>
+        .st-key-log_save_bar {
+            position: fixed;
+            bottom: 1.5rem;
+            right: 2.5rem;
+            z-index: 1000;
+            width: auto;
+        }
+        /* Keep room at the end of the form so the floating button never
+           covers the last fields. */
+        div:has(> .st-key-log_save_bar) {
+            min-height: 3.5rem;
+        }
+        .st-key-log_save_bar button {
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    save_bar = st.container(key="log_save_bar")
+    if save_bar.button("💾 Add to inventory", type="primary"):
         if chosen_product is None:
             st.error("Pick (or describe) a product first.")
             return
